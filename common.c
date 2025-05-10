@@ -1,5 +1,42 @@
 #include "common.h"
 
+void *memcpy(void *dst, const void *src, size_t n) {
+    char *d = dst;
+    const uint8_t *s = (const uint8_t *) src;
+    while (n--) {
+        *d++ = *s++;
+    }
+    return dst;
+}
+
+void *memset(void *buf, char c, size_t n) {
+    uint8_t *p = (uint8_t *) buf;
+    while (n--)
+        *p++ = c;
+        // *p = c;
+        // p = p + 1;
+    return buf;
+}
+
+char *strcpy(char *dst, const char *src) {
+    char *d = dst;
+    while (*src) {
+        *d++ = *src++;
+    }
+    *d = '\0';
+    return dst;
+}
+
+int strcmp(const char *s1, const char *s2) {
+    while (*s1 && *s2) {
+        if (*s1 != *s2)
+            break;
+        s1++;
+        s2++;
+    }
+    return *(unsigned char *) s1 - *(unsigned char *) s2;
+}
+
 void putchar(char ch);
 
 void printf(const char *fmt, ...) {
@@ -24,7 +61,7 @@ void printf(const char *fmt, ...) {
                     }
                     break;
                 }
-                case 'd': {
+                case 'd': { //print an integer in decimal
                     int value = va_arg(vargs, int);
                     if (value < 0) {
                         putchar('-');
@@ -43,7 +80,7 @@ void printf(const char *fmt, ...) {
 
                     break;
                 }
-                case 'x': {
+                case 'x': { // print an integer in hexadecimal
                     int value = va_arg(vargs, int);
                     for (int i = 7; i >= 0; i--) {
                         int nibble = (value >> (i * 4)) & 0xf;
