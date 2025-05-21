@@ -75,6 +75,42 @@ __attribute__((naked)) void switch_context(uint32_t *prev_sp,
     );
 }
 
+extern char __free_ram[], __free_ram_end[];
+
+paddr_t alloc_pages(uint32_t n) {
+    static paddr_t next_paddr = (paddr_t) __free_ram;
+    paddr_t paddr = next_paddr;
+    next_paddr += n * PAGE_SIZE;
+
+    if (next_paddr > (paddr_t) __free_ram_end) {
+        PANIC("out of memory");
+    }
+    
+    memset((void *) paddr, 0, n * PAGE_SIZE);
+    return paddr;
+}
+
+void map_page(uint32_t *table1, uint32_t vaddr, paddr_t paddr, uint32_t flags) {
+    if (!is_aligned(vaddr, PAGE_SIZE))
+        PANIC("vaddr %x is not aligned to page size\n", vaddr);
+    if (!is_aligned(paddr, PAGE_SIZE))
+        PANIC("paddr %x is not aligned to page size\n", paddr);
+
+    uint32_t vpn1 = (vaddr >> 22) & 0x3ff;
+    if ((table1[vpn1] & PAGE_V) == 0) {
+        // allocate a new page table because there is no page table
+        uint32_t pt_paddr = alloc_pages(1);
+        table1[vpn1] = ((pt_paddr / PAGE_SIZE) << 10) | PAGE_V;
+    }
+
+    // add entry to the second level page table
+    uint32_t vpn0 = (vaddr >> 12) & 0x3ff;
+    uint32_t *table0 = (uint32_t *) ((table1[vpn1] >> 10) * PAGE_SIZE);
+    table0[vpn0] = ((paddr / PAGE_SIZE) << 10) | flags | PAGE_V;
+}
+
+extern char __kernel_base[];
+
 struct process *create_process(uint32_t pc) {
     // explore free process
     struct process *proc = NULL;
@@ -105,36 +141,24 @@ struct process *create_process(uint32_t pc) {
     *--sp = 0;              // s0
     *--sp = (uint32_t) pc; // ra
 
+    uint32_t *page_table = (uint32_t *) alloc_pages(1);
+
+    // map page of kernel
+    for(paddr_t paddr = (paddr_t) __kernel_base;
+        paddr < (paddr_t) __free_ram_end; paddr += PAGE_SIZE)
+        map_page(page_table, paddr, paddr, PAGE_R | PAGE_W | PAGE_X);
+
     // initialize process
     proc->pid = i+1;
     proc->state = PROC_RUNNABLE;
     proc->sp = (uint32_t) sp;
+    proc->page_table = page_table;
     return proc;
 }
 
 void delay(void) {
     for (int i = 0; i < 30000000; i++)
         __asm__ __volatile__("nop");
-}
-
-struct process *proc_a;
-struct process *proc_b;
-
-void proc_a_entry(void) {
-    printf("starting proc_a\n");
-    while (1) {
-        putchar('a');
-        switch_context(&proc_a->sp, &proc_b->sp);
-        delay();
-    }
-}
-void proc_b_entry(void) {
-    printf("starting proc_b\n");
-    while (1) {
-        putchar('b');
-        switch_context(&proc_b->sp, &proc_a->sp);
-        delay();
-    }
 }
 
 struct process *current_proc;
@@ -158,15 +182,40 @@ void yield(void) {
 
     // initialize to sscratch register
     __asm__ __volatile__(
+        "sfence.vma\n"    // flush TLB
+        "csrw satp, %[satp]\n"
+        "sfence.vma\n"
         "csrw sscratch, %[sscratch]\n"
         :
-        : [sscratch] "r" ((uint32_t) &next->stack[sizeof(next->stack)])
+        : [satp] "r" (SATP_SV32 | ((uint32_t) next->page_table / PAGE_SIZE)),
+          [sscratch] "r" ((uint32_t) &next->stack[sizeof(next->stack)])
     );
 
     // context switch
     struct process *prev = current_proc;
     current_proc = next;
     switch_context(&prev->sp, &next->sp);
+}
+
+
+struct process *proc_a;
+struct process *proc_b;
+
+void proc_a_entry(void) {
+    printf("starting proc_a\n");
+    while (1) {
+        putchar('a');
+        yield();
+        delay();
+    }
+}
+void proc_b_entry(void) {
+    printf("starting proc_b\n");
+    while (1) {
+        putchar('b');
+        yield();
+        delay();
+    }
 }
 
 extern char __bss[], __bss_end[], __stack_top[];
@@ -188,7 +237,8 @@ __attribute__((naked))
 __attribute__((aligned(4)))
 void kernel_entry(void) {
     __asm__ __volatile__(
-        // put up kernel stacks from sscratch
+        // put up kernel stacks of running process in sscratch
+        // tmp = sp; sp = sscratch; sscratch = tmp
         "csrrw sp, sscratch, sp\n"
 
         "addi sp, sp, -4 * 31\n"
@@ -269,21 +319,6 @@ void kernel_entry(void) {
     );
 }
 
-extern char __free_ram[], __free_ram_end[];
-
-paddr_t alloc_pages(uint32_t n) {
-    static paddr_t next_paddr = (paddr_t) __free_ram;
-    paddr_t paddr = next_paddr;
-    next_paddr += n * PAGE_SIZE;
-
-    if (next_paddr > (paddr_t) __free_ram_end) {
-        PANIC("out of memory");
-    }
-    
-    memset((void *) paddr, 0, n * PAGE_SIZE);
-    return paddr;
-}
-
 void kernel_main(void) {
     printf("\n\nHello %s\n", "World!");
     printf("1 + 2 = %d, %x\n", 1 + 2, 0x1234abcd);
@@ -297,11 +332,16 @@ void kernel_main(void) {
 //    printf("alloc_pages test: paddr1=%x\n", paddr1);
 
     WRITE_CSR(stvec, (uint32_t) kernel_entry);
+
+    idle_proc = create_process((uint32_t) NULL);
+    idle_proc->pid = 0; // idle
+    current_proc = idle_proc;
+
     proc_a = create_process((uint32_t) proc_a_entry);
     proc_b = create_process((uint32_t) proc_b_entry);
-    proc_a_entry();
 
-    PANIC("booted!");
+    yield();
+    PANIC("switched to idle process\n");
     printf("unreachable here\n");
 }
 
@@ -312,3 +352,4 @@ void handle_trap(struct trap_frame *f) {
 
     PANIC("unexpected trap: scause = %x, stval = %x, sepc = %x\n", scause, stval, user_pc);
 }
+

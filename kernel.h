@@ -1,4 +1,10 @@
 #pragma once
+#define SATP_SV32 (1u << 31)
+#define PAGE_V    (1 << 0) // valid
+#define PAGE_R    (1 << 1) // readable
+#define PAGE_W    (1 << 2) // writable
+#define PAGE_X    (1 << 3) // executable
+#define PAGE_U    (1 << 4) // able to access from user mode
 
 struct sbiret {
     long error;
@@ -66,5 +72,6 @@ struct process {
     int pid;    // process id
     int state;  // process state (PROC_UNUSED, PROC_RUNNABLE)
     vaddr_t sp; //stack pointer while context switch
+    uint32_t *page_table; // page table
     uint8_t stack[8192]; // kernel stack
 };
