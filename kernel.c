@@ -33,6 +33,11 @@ void putchar(char ch) {
     sbi_call(ch, 0, 0, 0, 0, 0, 0, 1 /* Console Putchar */);
 }
 
+long getchar(void) {
+    struct sbiret ret = sbi_call(0, 0, 0, 0, 0, 0, 0, 2);
+    return ret.error;
+}
+
 struct process procs[PROCS_MAX];
 
 __attribute__((naked)) void switch_context(uint32_t *prev_sp,
@@ -376,6 +381,21 @@ void handle_syscall(struct trap_frame *f) {
         case SYS_PUTCHAR:
             putchar(f->a0);
             break;
+        case SYS_GETCHAR:
+            while (1) {
+                long ch = getchar();
+                if (ch >= 0) {
+                    f->a0 = ch; // return character to user
+                    break;
+                }
+                yield();  // yield cpu to other processes
+            }
+            break;
+        case SYS_EXIT:
+            printf("process %d exited\n", current_proc->pid);
+            current_proc->state = PROC_EXITED;
+            yield(); // switch to another process
+            PANIC("unreachable");
         default:
             PANIC("unknown syscall: a3=%x\n", f->a3);
     }

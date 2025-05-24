@@ -2,10 +2,6 @@
 
 extern char __stack_top[];
 
-__attribute__((noreturn)) void exit(void) {
-    for (;;);
-}
-
 __attribute__((section(".text.start")))
 __attribute__((naked))
 void start(void) {
@@ -30,5 +26,14 @@ int syscall(int sysno, int arg0, int arg1, int arg2) {
 
 void putchar(char ch) {
     syscall(SYS_PUTCHAR, ch, 0, 0); // システムコールを使って文字を出力
+}
+
+int getchar(void) {
+    return syscall(SYS_GETCHAR, 0, 0, 0); // システムコールを使って文字を取得
+}
+
+__attribute__((noreturn)) void exit(void) {
+    syscall(SYS_EXIT, 0, 0, 0); // システムコールを使ってプログラムを終了
+    for (;;); // exitがもしも戻ってきたら無限ループ
 }
 
