@@ -37,3 +37,10 @@ __attribute__((noreturn)) void exit(void) {
     for (;;); // exitがもしも戻ってきたら無限ループ
 }
 
+int readfile(const char *filename, void *buf, int len) {
+    return syscall(SYS_READFILE, (int) filename, (int) buf, len);
+}
+
+int writefile(const char *filename, const void *buf, int len) {
+    return syscall(SYS_WRITEFILE, (int) filename, (int) buf, len);
+}
